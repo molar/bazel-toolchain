@@ -134,13 +134,14 @@ def conditional_cc_toolchain(name, darwin, absolute_paths = False):
         native.filegroup(name = name + "-assembler-files", srcs = [":as"] + extra_files)
         native.filegroup(name = name + "-compiler-files", srcs = [":compiler_components"] + extra_files)
         native.filegroup(name = name + "-linker-files", srcs = [":linker_components"] + extra_files)
+        native.filegroup(name = name + "-dwp-files", srcs = [":dwp"] + extra_files)
         _cc_toolchain(
             name = name,
             all_files = name + "-all-files",
             ar_files = name + "-archiver-files",
             as_files = name + "-assembler-files",
             compiler_files = name + "-compiler-files",
-            dwp_files = ":empty",
+            dwp_files = name + "-dwp-files",
             linker_files = name + "-linker-files",
             objcopy_files = ":objcopy",
             strip_files = ":empty",
