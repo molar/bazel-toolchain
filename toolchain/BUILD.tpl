@@ -193,6 +193,12 @@ filegroup(
 )
 
 filegroup(
+    name = "clang_tidy",
+    srcs = ["bin/clang-tidy"],
+    data = [":include",":lib",":sysroot_components"]
+)
+
+filegroup(
     name = "binutils_components",
     srcs = glob(["bin/*"]),
 )
