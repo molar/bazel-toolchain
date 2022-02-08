@@ -1,4 +1,4 @@
-# Copyright 2018 The Bazel Authors.
+# Copyright 2021 The Bazel Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-def llvm_register_toolchains():
-    native.register_toolchains(
-        %{toolchain_labels}
-    )
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+# See https://bazelbuild.github.io/rules_foreign_cc/0.6.0/cmake.html
+cmake(
+    name = "pcre",
+    cache_entries = {
+        "CMAKE_C_FLAGS": "-fPIC",
+    },
+    lib_source = "@pcre//:all_srcs",
+    out_static_libs = ["libpcre.a"],
+)
+
+# A smaller test would be something like
+# https://github.com/bazelbuild/rules_foreign_cc/blob/0.6.0/examples/cmake_hello_world_lib/binary/BUILD.bazel

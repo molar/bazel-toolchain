@@ -13,138 +13,364 @@
 # limitations under the License.
 
 load(
-    "@com_grail_bazel_toolchain//toolchain/internal:llvm_distributions.bzl",
-    _download_llvm = "download_llvm",
-    _download_llvm_preconfigured = "download_llvm_preconfigured",
+    "//toolchain/internal:common.bzl",
+    _arch = "arch",
+    _canonical_dir_path = "canonical_dir_path",
+    _check_os_arch_keys = "check_os_arch_keys",
+    _host_tool_features = "host_tool_features",
+    _host_tools = "host_tools",
+    _os = "os",
+    _os_arch_pair = "os_arch_pair",
+    _os_bzl = "os_bzl",
+    _pkg_path_from_label = "pkg_path_from_label",
+    _supported_targets = "SUPPORTED_TARGETS",
 )
 load(
-    "@com_grail_bazel_toolchain//toolchain/internal:sysroot.bzl",
+    "//toolchain/internal:sysroot.bzl",
+    _default_sysroot_path = "default_sysroot_path",
     _sysroot_path = "sysroot_path",
 )
-load("@rules_cc//cc:defs.bzl", _cc_toolchain = "cc_toolchain")
 
-def _makevars_ld_flags(rctx):
-    if rctx.os.name == "mac os x":
-        return ""
-
-    # lld, as of LLVM 7, is experimental for Mach-O, so we use it only on linux.
-    return "-fuse-ld=lld"
-
-def _include_dirs_str(rctx, cpu):
-    dirs = rctx.attr.cxx_builtin_include_directories.get(cpu)
+def _include_dirs_str(rctx, key):
+    dirs = rctx.attr.cxx_builtin_include_directories.get(key)
     if not dirs:
         return ""
     return ("\n" + 12 * " ").join(["\"%s\"," % d for d in dirs])
 
-def llvm_toolchain_impl(rctx):
-    if rctx.os.name.startswith("windows"):
-        rctx.file("BUILD")
-        rctx.file("toolchains.bzl", """
+def llvm_config_impl(rctx):
+    _check_os_arch_keys(rctx.attr.toolchain_roots)
+    _check_os_arch_keys(rctx.attr.sysroot)
+    _check_os_arch_keys(rctx.attr.cxx_builtin_include_directories)
+
+    os = _os(rctx)
+    if os == "windows":
+        rctx.file("BUILD.bazel")
+        rctx.file("toolchains.bzl", """\
 def llvm_register_toolchains():
     pass
-        """)
+""")
         return
+    arch = _arch(rctx)
 
-    repo_path = str(rctx.path(""))
-    relative_path_prefix = "external/%s/" % rctx.name
-    if rctx.attr.absolute_paths:
-        toolchain_path_prefix = (repo_path + "/")
+    key = _os_arch_pair(os, arch)
+    toolchain_root = rctx.attr.toolchain_roots.get(key)
+    if not toolchain_root:
+        toolchain_root = rctx.attr.toolchain_roots.get("")
+    if not toolchain_root:
+        fail("LLVM toolchain root missing for ({}, {})", os, arch)
+
+    # Check if the toolchain root is an absolute path.
+    use_absolute_paths = rctx.attr.absolute_paths
+    if toolchain_root[0] == "/" and (len(toolchain_root) == 1 or toolchain_root[1] != "/"):
+        use_absolute_paths = True
+
+    if use_absolute_paths:
+        llvm_repo_label = Label(toolchain_root + ":BUILD.bazel")  # Exact target does not matter.
+        llvm_repo_path = _canonical_dir_path(str(rctx.path(llvm_repo_label).dirname))
+        config_repo_path = _canonical_dir_path(str(rctx.path("")))
+        toolchain_path_prefix = llvm_repo_path
+        tools_path_prefix = llvm_repo_path
+        wrapper_bin_prefix = config_repo_path
     else:
-        toolchain_path_prefix = relative_path_prefix
+        llvm_repo_path = _pkg_path_from_label(Label(toolchain_root + ":BUILD.bazel"))
+        config_repo_path = "external/%s/" % rctx.name
 
-    sysroot_path, sysroot = _sysroot_path(rctx)
-    substitutions = {
-        "%{repo_name}": rctx.name,
-        "%{llvm_version}": rctx.attr.llvm_version,
-        "%{toolchain_path_prefix}": toolchain_path_prefix,
-        "%{tools_path_prefix}": (repo_path + "/") if rctx.attr.absolute_paths else "",
-        "%{debug_toolchain_path_prefix}": relative_path_prefix,
-        "%{sysroot_path}": sysroot_path,
-        "%{sysroot_prefix}": "%sysroot%" if sysroot_path else "",
-        "%{sysroot_label}": "\"%s\"" % str(sysroot) if sysroot else "",
-        "%{absolute_paths}": "True" if rctx.attr.absolute_paths else "False",
-        "%{makevars_ld_flags}": _makevars_ld_flags(rctx),
-        "%{k8_additional_cxx_builtin_include_directories}": _include_dirs_str(rctx, "k8"),
-        "%{darwin_additional_cxx_builtin_include_directories}": _include_dirs_str(rctx, "darwin"),
-    }
+        # tools can only be defined in a subdirectory of config_repo_path,
+        # because their paths are relative to the package defining
+        # cc_toolchain, and cannot contain '..'.
+        # https://github.com/bazelbuild/bazel/issues/7746.  To work around
+        # this, we symlink the llvm repo under the package so all tools (except
+        # clang) can be called with normalized relative paths. For clang
+        # however, using a path with symlinks interferes with the header file
+        # inclusion validation checks, because clang frontend will infer the
+        # InstalledDir to be the symlinked path, and will look for header files
+        # in the symlinked path, but that seems to fail the inclusion
+        # validation check. So we always use a cc_wrapper (which is called
+        # through a normalized relative path), and then call clang with the not
+        # symlinked path from the wrapper.
+        rctx.symlink("../../" + llvm_repo_path, "llvm")
+        toolchain_path_prefix = llvm_repo_path
+        tools_path_prefix = "llvm/"
+        wrapper_bin_prefix = ""
 
+    default_sysroot_path = _default_sysroot_path(rctx, os)
+
+    workspace_name = rctx.name
+    toolchain_info = struct(
+        os = os,
+        arch = arch,
+        toolchain_root = toolchain_root,
+        toolchain_path_prefix = toolchain_path_prefix,
+        tools_path_prefix = tools_path_prefix,
+        wrapper_bin_prefix = wrapper_bin_prefix,
+        additional_include_dirs_dict = rctx.attr.cxx_builtin_include_directories,
+        sysroot_dict = rctx.attr.sysroot,
+        default_sysroot_path = default_sysroot_path,
+        llvm_version = rctx.attr.llvm_version,
+    )
+    host_tools_info = dict([
+        pair
+        for (key, tool_path, features) in [
+            # This is used for macOS hosts:
+            ("libtool", "/usr/bin/libtool", [_host_tool_features.SUPPORTS_ARG_FILE]),
+            # This is used with old (pre 7) LLVM versions:
+            ("strip", "/usr/bin/strip", []),
+            # This is used when lld doesn't support the target platform (i.e.
+            # Mach-O for macOS):
+            ("ld", "/usr/bin/ld", []),
+        ]
+        for pair in _host_tools.get_tool_info(rctx, tool_path, features, key).items()
+    ])
+    cc_toolchains_str, toolchain_labels_str = _cc_toolchains_str(
+        workspace_name,
+        toolchain_info,
+        use_absolute_paths,
+        host_tools_info,
+    )
+
+    # Convenience macro to register all generated toolchains.
     rctx.template(
         "toolchains.bzl",
-        Label("@com_grail_bazel_toolchain//toolchain:toolchains.bzl.tpl"),
-        substitutions,
-    )
-    rctx.template(
-        "cc_toolchain_config.bzl",
-        Label("@com_grail_bazel_toolchain//toolchain:cc_toolchain_config.bzl.tpl"),
-        substitutions,
-    )
-    rctx.template(
-        "bin/cc_wrapper.sh",  # Co-located with the linker to help rules_go.
-        Label("@com_grail_bazel_toolchain//toolchain:cc_wrapper.sh.tpl"),
-        substitutions,
-    )
-    rctx.template(
-        "Makevars",
-        Label("@com_grail_bazel_toolchain//toolchain:Makevars.tpl"),
-        substitutions,
-    )
-    rctx.template(
-        "BUILD",
-        Label("@com_grail_bazel_toolchain//toolchain:BUILD.tpl"),
-        substitutions,
+        Label("//toolchain:toolchains.bzl.tpl"),
+        {
+            "%{toolchain_labels}": toolchain_labels_str,
+        },
     )
 
-    rctx.symlink("/usr/bin/ar", "bin/ar")  # For GoLink.
+    # BUILD file with all the generated toolchain definitions.
+    rctx.template(
+        "BUILD.bazel",
+        Label("//toolchain:BUILD.toolchain.tpl"),
+        {
+            "%{cc_toolchains}": cc_toolchains_str,
+            "%{cc_toolchain_config_bzl}": str(rctx.attr._cc_toolchain_config_bzl),
+        },
+    )
 
-    # For GoCompile on macOS; compiler path is set from linker path.
-    # It also helps clang driver sometimes for the linker to be colocated with the compiler.
-    rctx.symlink("/usr/bin/ld", "bin/ld")
-    if rctx.os.name == "linux":
-        rctx.symlink("/usr/bin/ld.gold", "bin/ld.gold")
+    # CC wrapper script; see comments near the definition of `wrapper_bin_prefix`.
+    if os == "darwin":
+        cc_wrapper_tpl = "//toolchain:osx_cc_wrapper.sh.tpl"
     else:
-        # Add dummy file for non-linux so we don't have to put conditional logic in BUILD.
-        rctx.file("bin/ld.gold")
+        cc_wrapper_tpl = "//toolchain:cc_wrapper.sh.tpl"
+    rctx.template(
+        "bin/cc_wrapper.sh",
+        Label(cc_wrapper_tpl),
+        {
+            "%{toolchain_path_prefix}": toolchain_path_prefix,
+        },
+    )
 
-    # Repository implementation functions can be restarted, keep expensive ops at the end.
-    if not _download_llvm(rctx):
-        _download_llvm_preconfigured(rctx)
+    # libtool wrapper; used if the host libtool doesn't support arg files:
+    rctx.template(
+        "bin/host_libtool_wrapper.sh",
+        Label("//toolchain:host_libtool_wrapper.sh.tpl"),
+        {
+            "%{libtool_path}": "/usr/bin/libtool",
+        },
+    )
 
-def conditional_cc_toolchain(name, darwin, absolute_paths = False):
-    # Toolchain macro for BUILD file to use conditional logic.
+def _cc_toolchains_str(
+        workspace_name,
+        toolchain_info,
+        use_absolute_paths,
+        host_tools_info):
+    # Since all the toolchains rely on downloading the right LLVM toolchain for
+    # the host architecture, we don't need to explicitly specify
+    # `exec_compatible_with` attribute. If the host and execution platform are
+    # not the same, then host auto-detection based LLVM download does not work
+    # and the user has to explicitly specify the distribution of LLVM they
+    # want.
 
-    toolchain_config = "local_darwin" if darwin else "local_linux"
-    toolchain_identifier = "clang-darwin" if darwin else "clang-linux"
+    # Note that for cross-compiling, the toolchain configuration will need
+    # appropriate sysroots. A recommended approach is to configure two
+    # `llvm_toolchain` repos, one without sysroots (for easy single platform
+    # builds) and register this one, and one with sysroots and provide
+    # `--extra_toolchains` flag when cross-compiling.
 
-    if absolute_paths:
-        _cc_toolchain(
-            name = name,
-            all_files = ":empty",
-            compiler_files = ":empty",
-            dwp_files = ":empty",
-            linker_files = ":empty",
-            objcopy_files = ":empty",
-            strip_files = ":empty",
-            supports_param_files = 0 if darwin else 1,
-            toolchain_config = toolchain_config,
+    cc_toolchains_str = ""
+    toolchain_names = []
+    for (target_os, target_arch) in _supported_targets:
+        suffix = "{}-{}".format(target_arch, target_os)
+        cc_toolchain_str = _cc_toolchain_str(
+            suffix,
+            target_os,
+            target_arch,
+            toolchain_info,
+            use_absolute_paths,
+            host_tools_info,
         )
+        if cc_toolchain_str:
+            cc_toolchains_str = cc_toolchains_str + cc_toolchain_str
+            toolchain_name = "@{}//:cc-toolchain-{}".format(workspace_name, suffix)
+            toolchain_names.append(toolchain_name)
+
+    sep = ",\n" + " " * 8  # 2 tabs with tabstop=4.
+    toolchain_labels_str = sep.join(["\"{}\"".format(d) for d in toolchain_names])
+    return cc_toolchains_str, toolchain_labels_str
+
+def _cc_toolchain_str(
+        suffix,
+        target_os,
+        target_arch,
+        toolchain_info,
+        use_absolute_paths,
+        host_tools_info):
+    host_os = toolchain_info.os
+    host_arch = toolchain_info.arch
+
+    host_os_bzl = _os_bzl(host_os)
+    target_os_bzl = _os_bzl(target_os)
+
+    sysroot_path, sysroot = _sysroot_path(
+        toolchain_info.sysroot_dict,
+        target_os,
+        target_arch,
+    )
+    if not sysroot_path:
+        if host_os == target_os and host_arch == target_arch:
+            # For darwin -> darwin, we can use the macOS SDK path.
+            sysroot_path = toolchain_info.default_sysroot_path
+        else:
+            # We are trying to cross-compile without a sysroot, let's bail.
+            # TODO: Are there situations where we can continue?
+            return ""
+
+    extra_files_str = ", \":llvm\", \":wrapper-files\""
+
+    additional_include_dirs = toolchain_info.additional_include_dirs_dict.get(_os_arch_pair(target_os, target_arch))
+    additional_include_dirs_str = "[]"
+    if additional_include_dirs:
+        additional_include_dirs_str = "[{}]".format(
+            ", ".join(["\"{}\"".format(d) for d in additional_include_dirs]),
+        )
+
+    sysroot_label_str = "\"%s\"" % str(sysroot) if sysroot else ""
+
+    # `struct` isn't allowed in `BUILD` files so we JSON encode + decode to turn
+    # them into `dict`s.
+    host_tools_info = json.decode(json.encode(host_tools_info))
+
+    template = """
+# CC toolchain for cc-clang-{suffix}.
+
+cc_toolchain_config(
+    name = "local-{suffix}",
+    host_arch = "{host_arch}",
+    host_os = "{host_os}",
+    target_arch = "{target_arch}",
+    target_os = "{target_os}",
+    toolchain_path_prefix = "{toolchain_path_prefix}",
+    tools_path_prefix = "{tools_path_prefix}",
+    wrapper_bin_prefix = "{wrapper_bin_prefix}",
+    sysroot_path = "{sysroot_path}",
+    additional_include_dirs = {additional_include_dirs_str},
+    llvm_version = "{llvm_version}",
+    host_tools_info = {host_tools_info},
+)
+
+toolchain(
+    name = "cc-toolchain-{suffix}",
+    exec_compatible_with = [
+        "@platforms//cpu:{host_arch}",
+        "@platforms//os:{host_os_bzl}",
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:{target_arch}",
+        "@platforms//os:{target_os_bzl}",
+    ],
+    toolchain = ":cc-clang-{suffix}",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+"""
+
+    if use_absolute_paths:
+        template = template + """
+cc_toolchain(
+    name = "cc-clang-{suffix}",
+    all_files = ":empty",
+    compiler_files = ":empty",
+    dwp_files = ":empty",
+    linker_files = ":empty",
+    objcopy_files = ":empty",
+    strip_files = ":empty",
+    toolchain_config = "local-{suffix}",
+)
+"""
     else:
-        extra_files = [":cc_wrapper"] if darwin else []
-        native.filegroup(name = name + "-all-files", srcs = [":all_components"] + extra_files)
-        native.filegroup(name = name + "-archiver-files", srcs = [":ar"] + extra_files)
-        native.filegroup(name = name + "-assembler-files", srcs = [":as"] + extra_files)
-        native.filegroup(name = name + "-compiler-files", srcs = [":compiler_components"] + extra_files)
-        native.filegroup(name = name + "-linker-files", srcs = [":linker_components"] + extra_files)
-        native.filegroup(name = name + "-dwp-files", srcs = [":dwp"] + extra_files)
-        _cc_toolchain(
-            name = name,
-            all_files = name + "-all-files",
-            ar_files = name + "-archiver-files",
-            as_files = name + "-assembler-files",
-            compiler_files = name + "-compiler-files",
-            dwp_files = name + "-dwp-files",
-            linker_files = name + "-linker-files",
-            objcopy_files = ":objcopy",
-            strip_files = ":empty",
-            supports_param_files = 0 if darwin else 1,
-            toolchain_config = toolchain_config,
-        )
+        template = template + """
+filegroup(
+    name = "sysroot-components-{suffix}",
+    srcs = [{sysroot_label_str}],
+)
+
+filegroup(
+    name = "compiler-components-{suffix}",
+    srcs = [
+        "{toolchain_root}:clang",
+        "{toolchain_root}:include",
+        ":sysroot-components-{suffix}",
+    ],
+)
+
+filegroup(
+    name = "linker-components-{suffix}",
+    srcs = [
+        "{toolchain_root}:clang",
+        "{toolchain_root}:ld",
+        "{toolchain_root}:ar",
+        "{toolchain_root}:lib",
+        ":sysroot-components-{suffix}",
+    ],
+)
+
+filegroup(
+    name = "all-components-{suffix}",
+    srcs = [
+        "{toolchain_root}:bin",
+        ":compiler-components-{suffix}",
+        ":linker-components-{suffix}",
+    ],
+)
+
+filegroup(name = "all-files-{suffix}", srcs = [":all-components-{suffix}"{extra_files_str}])
+filegroup(name = "archiver-files-{suffix}", srcs = ["{toolchain_root}:ar"{extra_files_str}])
+filegroup(name = "assembler-files-{suffix}", srcs = ["{toolchain_root}:as"{extra_files_str}])
+filegroup(name = "compiler-files-{suffix}", srcs = [":compiler-components-{suffix}"{extra_files_str}])
+filegroup(name = "dwp-files-{suffix}", srcs = ["{toolchain_root}:dwp"{extra_files_str}])
+filegroup(name = "linker-files-{suffix}", srcs = [":linker-components-{suffix}"{extra_files_str}])
+filegroup(name = "objcopy-files-{suffix}", srcs = ["{toolchain_root}:objcopy"{extra_files_str}])
+filegroup(name = "strip-files-{suffix}", srcs = ["{toolchain_root}:strip"{extra_files_str}])
+
+cc_toolchain(
+    name = "cc-clang-{suffix}",
+    all_files = "all-files-{suffix}",
+    ar_files = "archiver-files-{suffix}",
+    as_files = "assembler-files-{suffix}",
+    compiler_files = "compiler-files-{suffix}",
+    dwp_files = "dwp-files-{suffix}",
+    linker_files = "linker-files-{suffix}",
+    objcopy_files = "objcopy-files-{suffix}",
+    strip_files = "strip-files-{suffix}",
+    toolchain_config = "local-{suffix}",
+)
+"""
+
+    return template.format(
+        suffix = suffix,
+        target_os = target_os,
+        target_arch = target_arch,
+        host_os = host_os,
+        host_arch = host_arch,
+        target_os_bzl = target_os_bzl,
+        host_os_bzl = host_os_bzl,
+        toolchain_root = toolchain_info.toolchain_root,
+        toolchain_path_prefix = toolchain_info.toolchain_path_prefix,
+        tools_path_prefix = toolchain_info.tools_path_prefix,
+        wrapper_bin_prefix = toolchain_info.wrapper_bin_prefix,
+        additional_include_dirs_str = additional_include_dirs_str,
+        sysroot_label_str = sysroot_label_str,
+        sysroot_path = sysroot_path,
+        llvm_version = toolchain_info.llvm_version,
+        extra_files_str = extra_files_str,
+        host_tools_info = host_tools_info,
+    )

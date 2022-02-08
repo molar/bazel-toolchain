@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-def _darwin_sdk_path(rctx):
-    if rctx.os.name != "mac os x":
-        return ""
+load(
+    "//toolchain/internal:common.bzl",
+    _os_arch_pair = "os_arch_pair",
+    _pkg_path_from_label = "pkg_path_from_label",
+)
 
+def _darwin_sdk_path(rctx):
     exec_result = rctx.execute(["/usr/bin/xcrun", "--show-sdk-path", "--sdk", "macosx"])
     if exec_result.return_code:
         fail("Failed to detect OSX SDK path: \n%s\n%s" % (exec_result.stdout, exec_result.stderr))
@@ -23,23 +26,20 @@ def _darwin_sdk_path(rctx):
         print(exec_result.stderr)
     return exec_result.stdout.strip()
 
-def _default_sysroot(rctx):
-    if rctx.os.name == "mac os x":
+# Default sysroot path can be used when the user has not provided an explicit
+# sysroot for the target, and when host platform is the same as target
+# platform.
+def default_sysroot_path(rctx, os):
+    if os == "darwin":
         return _darwin_sdk_path(rctx)
     else:
         return ""
 
 # Return the sysroot path and the label to the files, if sysroot is not a system path.
-def sysroot_path(rctx):
-    if rctx.os.name == "linux":
-        sysroot = rctx.attr.sysroot.get("linux", default = "")
-    elif rctx.os.name == "mac os x":
-        sysroot = rctx.attr.sysroot.get("darwin", default = "")
-    else:
-        fail("Unsupported OS: " + rctx.os.name)
-
+def sysroot_path(sysroot_dict, os, arch):
+    sysroot = sysroot_dict.get(_os_arch_pair(os, arch))
     if not sysroot:
-        return (_default_sysroot(rctx), None)
+        return (None, None)
 
     # If the sysroot is an absolute path, use it as-is. Check for things that
     # start with "/" and not "//" to identify absolute paths, but also support
@@ -47,8 +47,5 @@ def sysroot_path(rctx):
     if sysroot[0] == "/" and (len(sysroot) == 1 or sysroot[1] != "/"):
         return (sysroot, None)
 
-    sysroot = Label(sysroot)
-    if sysroot.workspace_root:
-        return (sysroot.workspace_root + "/" + sysroot.package, sysroot)
-    else:
-        return (sysroot.package, sysroot)
+    sysroot_path = _pkg_path_from_label(Label(sysroot))
+    return (sysroot_path, sysroot)

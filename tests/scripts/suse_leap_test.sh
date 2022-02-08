@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2020 The Bazel Authors.
+# Copyright 2021 The Bazel Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,26 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -euo pipefail
+set -euox pipefail
 
 images=(
-"ubuntu:20.04"
+"opensuse/leap:latest"
 )
 
 git_root=$(git rev-parse --show-toplevel)
 readonly git_root
 
+echo "git root: $git_root"
+
 for image in "${images[@]}"; do
   docker pull "${image}"
-  docker run --rm --entrypoint=/bin/bash --volume="${git_root}:/src:ro" "${image}" -c """
+  docker run --rm --entrypoint=/bin/bash --volume="${git_root}:/src" "${image}" -c """
 set -exuo pipefail
 
 # Common setup
-export DEBIAN_FRONTEND=noninteractive
-apt-get -qq update
-apt-get -qq -y install apt-utils curl pkg-config zip g++ zlib1g-dev unzip python >/dev/null
-# The above command gives some verbose output that can not be silenced easily.
-# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=288778
+zypper -n update
+zypper -n install curl python tar gzip gcc libncurses5 binutils-gold
 
 # Run tests
 cd /src

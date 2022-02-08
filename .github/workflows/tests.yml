@@ -17,18 +17,23 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: test
-      env:
-        BAZELISK_GITHUB_TOKEN: ${{ secrets.BAZELISK_GITHUB_TOKEN }}
       run: tests/scripts/${{ matrix.script }}
   container_test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        script: [archlinux, debian, fedora, ubuntu_16_04, ubuntu_18_04, ubuntu_20_04, linux_sysroot]
+        # This list is missing suse_tumbleweed because their latest image is
+        # not working, and they don't have versioned images.
+        # TODO: Re-enable suse_tumbleweed when their docker image starts working.
+        script: [archlinux, debian, fedora, suse_leap, ubuntu_16_04, ubuntu_18_04, ubuntu_20_04, linux_sysroot]
     steps:
     - uses: actions/checkout@v2
     - name: test
-      env:
-        BAZELISK_GITHUB_TOKEN: ${{ secrets.BAZELISK_GITHUB_TOKEN }}
       run: tests/scripts/${{ matrix.script }}_test.sh
+  xcompile_test:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: test
+      run: tests/scripts/run_xcompile_tests.sh

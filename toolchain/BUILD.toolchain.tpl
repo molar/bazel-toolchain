@@ -12,7 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-def llvm_register_toolchains():
-    native.register_toolchains(
-        %{toolchain_labels}
-    )
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_toolchain", "cc_toolchain_suite")
+load("%{cc_toolchain_config_bzl}", "cc_toolchain_config")
+
+# Following filegroup targets are used when not using absolute paths and shared
+# between different toolchains.
+
+filegroup(
+    name = "empty",
+    srcs = [],
+)
+
+filegroup(
+    name = "wrapper-files",
+    srcs = [
+        "bin/cc_wrapper.sh",
+        "bin/host_libtool_wrapper.sh",
+    ],
+)
+
+%{cc_toolchains}
