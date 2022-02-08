@@ -124,3 +124,9 @@ filegroup(
     name = "strip",
     srcs = ["bin/llvm-strip"],
 )
+
+filegroup(
+    name = "clang_tidy",
+    srcs = ["bin/clang-tidy"],
+    data = [":include",":lib"]
+)
