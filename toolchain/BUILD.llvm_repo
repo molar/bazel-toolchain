@@ -128,5 +128,5 @@ filegroup(
 filegroup(
     name = "clang_tidy",
     srcs = ["bin/clang-tidy"],
-    data = [":include",":lib"]
+    data = [":include",":lib",":clang"]
 )
