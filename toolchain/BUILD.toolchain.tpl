@@ -33,4 +33,19 @@ filegroup(
     ],
 )
 
+cc_import(
+    name = "omp",
+    shared_library = "%{llvm_repo_label_prefix}lib/libomp.%{host_dl_ext}",
+)
+
+alias(
+    name = "clang-format",
+    actual = "%{llvm_repo_label_prefix}bin/clang-format",
+)
+
+alias(
+    name = "llvm-cov",
+    actual = "%{llvm_repo_label_prefix}bin/llvm-cov",
+)
+
 %{cc_toolchains}

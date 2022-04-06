@@ -95,9 +95,11 @@ build_test(
 )
 
 cc_test(
-    name = "pthread_link_test",
-    srcs = ["pthread_link_test.cc"],
-    linkstatic = False,
+    name = "omp_test",
+    srcs = ["omp_test.c"],
+    copts = ["-fopenmp"],
+    linkopts = ["-fopenmp"],
+    deps = ["@llvm_toolchain//:omp"],
 )
 
 sh_test(

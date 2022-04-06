@@ -17,13 +17,16 @@
 import platform
 import sys
 
-_known_distros = ["freebsd", "suse", "ubuntu", "arch", "manjaro", "debian", "fedora", "centos", "amzn", "raspbian", "pop"]
+import host_os_key
 
 def _major_llvm_version(llvm_version):
     return int(llvm_version.split(".")[0])
 
 def _minor_llvm_version(llvm_version):
     return int(llvm_version.split(".")[1])
+
+def _patch_llvm_version(llvm_version):
+    return int(llvm_version.split(".")[2])
 
 def _darwin(llvm_version, arch):
     major_llvm_version = _major_llvm_version(llvm_version)
@@ -50,49 +53,34 @@ def _ubuntu_osname(arch, version, major_llvm_version, llvm_version):
 
     os_name = "linux-gnu-ubuntu-16.04"
 
-    if version.startswith("20.10") and (llvm_version in ["11.0.1", "11.1.0"]):
-        os_name = "linux-gnu-ubuntu-20.10"
-    elif version.startswith("20"):
-        if major_llvm_version < 11 or llvm_version in ["11.0.1", "11.1.0"]:
-            # There is no binary packages specifically for 20.04, but those for 18.04 works on
-            # 20.04
-            os_name = "linux-gnu-ubuntu-18.04"
-        elif major_llvm_version > 11:
-            # release 11.0.0 started providing packaging for ubuntu 20.04.
+    is_llvm_major_release = (_minor_llvm_version(llvm_version) == 0) and (_patch_llvm_version(llvm_version) == 0)
+    major_ubuntu_version = int(version.split(".")[0])
+    if major_ubuntu_version >= 20:
+        if (not version.startswith("20.04")) and (llvm_version in ["11.0.1", "11.1.0"]):
+            os_name = "linux-gnu-ubuntu-20.10"
+        elif is_llvm_major_release and (major_llvm_version >= 11):
             os_name = "linux-gnu-ubuntu-20.04"
-    elif version.startswith("18"):
-        if llvm_version in ["8.0.0", "9.0.0", "10.0.0"]:
+        elif is_llvm_major_release and (major_llvm_version >= 8):
             os_name = "linux-gnu-ubuntu-18.04"
         else:
+            # There is no binary packages specifically for 20.04, but those for 16.04 works on
+            # 20.04
+            os_name = "linux-gnu-ubuntu-16.04"
+    elif major_ubuntu_version >= 18:
+        if is_llvm_major_release and (major_llvm_version >= 11):
+            # There is no binary packages specifically for 18.04, but those for 16.04 works on
+            # 18.04
+            os_name = "linux-gnu-ubuntu-16.04"
+        elif is_llvm_major_release and (major_llvm_version >= 8):
+            os_name = "linux-gnu-ubuntu-18.04"
+        else:
+            # There is no binary packages specifically for 18.04, but those for 16.04 works on
+            # 18.04
             os_name = "linux-gnu-ubuntu-16.04"
 
     return os_name
 
-def _linux(llvm_version, arch):
-    release_file_path = "/etc/os-release"
-    with open(release_file_path) as release_file:
-        lines = release_file.readlines()
-        info = dict()
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            [key, val] = line.split('=', 1)
-            info[key] = val
-    if "ID" not in info:
-        sys.exit("Could not find ID in /etc/os-release.")
-    distname = info["ID"].strip('\"')
-
-    if distname not in _known_distros:
-        for distro in info["ID_LIKE"].strip('\"').split(' '):
-            if distro in _known_distros:
-                distname = distro
-                break
-
-    version = None
-    if "VERSION_ID" in info:
-        version = info["VERSION_ID"].strip('"')
-
+def _linux(llvm_version, distname, version, arch):
     major_llvm_version = _major_llvm_version(llvm_version)
 
     # NOTE: Many of these systems are untested because I do not have access to them.
@@ -169,8 +157,10 @@ def _resolve_version_for_suse(major_llvm_version, minor_llvm_version):
             os_name = "linux-sles11.3"
         elif major_llvm_version == 10 and minor_llvm_version == 0:
             os_name = "linux-sles11.3"
-        else:
+        elif major_llvm_version < 13:
             os_name = "linux-sles12.4"
+        else:
+            os_name = "linux-gnu-ubuntu-20.04"
         return os_name
 
 def main():
@@ -181,22 +171,14 @@ def main():
 
     llvm_version = sys.argv[1]
 
-    system = platform.system()
-    arch = platform.machine()
+    os, version, arch = host_os_key.os_version_arch()
 
-    if system == "Darwin":
+    if os == "darwin":
         print(_darwin(llvm_version, arch))
-        sys.exit()
-
-    if system == "Windows":
+    elif os == "windows":
         print(_windows(llvm_version, arch))
-        sys.exit()
-
-    if system == "Linux":
-        print(_linux(llvm_version, arch))
-        sys.exit()
-
-    sys.exit("Unsupported system: %s" % system)
+    else:
+        print(_linux(llvm_version, os, version, arch))
 
 if __name__ == '__main__':
     main()
