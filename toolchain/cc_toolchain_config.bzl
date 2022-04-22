@@ -173,7 +173,6 @@ def cc_toolchain_config(
             # For single-platform builds, we can statically link the bundled
             # libraries.
             link_flags.extend([
-                "-L{}lib".format(toolchain_path_prefix),
                 "-l:libc++.a",
                 "-l:libc++abi.a",
                 "-l:libunwind.a",
@@ -230,11 +229,14 @@ def cc_toolchain_config(
     ## doesn't seem to have a feature for this.
 
     # C++ built-in include directories:
-    cxx_builtin_include_directories = [
-        toolchain_path_prefix + "include/c++/v1",
-        toolchain_path_prefix + "lib/clang/{}/include".format(llvm_version),
-        toolchain_path_prefix + "lib64/clang/{}/include".format(llvm_version),
-    ]
+    cxx_builtin_include_directories = []
+    if toolchain_path_prefix.startswith("/"):
+        cxx_builtin_include_directories.extend([
+            toolchain_path_prefix + "include/c++/v1",
+            toolchain_path_prefix + "include/{}/c++/v1".format(target_system_name),
+            toolchain_path_prefix + "lib/clang/{}/include".format(llvm_version),
+            toolchain_path_prefix + "lib64/clang/{}/include".format(llvm_version),
+        ])
 
     sysroot_path = compiler_configuration["sysroot_path"]
     sysroot_prefix = ""
@@ -263,10 +265,10 @@ def cc_toolchain_config(
     # `llvm-strip` was introduced in V7 (https://reviews.llvm.org/D46407):
     llvm_version = llvm_version.split(".")
     llvm_major_ver = int(llvm_version[0]) if len(llvm_version) else 0
-    strip_binary = (tools_path_prefix + "bin/llvm-strip") if llvm_major_ver >= 7 else _host_tools.get_and_assert(host_tools_info, "strip")
+    strip_binary = (tools_path_prefix + "llvm-strip") if llvm_major_ver >= 7 else _host_tools.get_and_assert(host_tools_info, "strip")
 
     # TODO: The command line formed on darwin does not work with llvm-ar.
-    ar_binary = tools_path_prefix + "bin/llvm-ar"
+    ar_binary = tools_path_prefix + "llvm-ar"
     if host_os == "darwin":
         # Bazel uses arg files for longer commands; some old macOS `libtool`
         # versions do not support this.
@@ -279,18 +281,19 @@ def cc_toolchain_config(
             ar_binary = host_tools_info["libtool"]["path"]
 
     # The tool names come from [here](https://github.com/bazelbuild/bazel/blob/c7e58e6ce0a78fdaff2d716b4864a5ace8917626/src/main/java/com/google/devtools/build/lib/rules/cpp/CppConfiguration.java#L76-L90):
+    # NOTE: Ensure these are listed in toolchain_tools in toolchain/internal/common.bzl.
     tool_paths = {
         "ar": ar_binary,
-        "cpp": tools_path_prefix + "bin/clang-cpp",
-        "dwp": tools_path_prefix + "bin/llvm-dwp",
+        "cpp": tools_path_prefix + "clang-cpp",
+        "dwp": tools_path_prefix + "llvm-dwp",
         "gcc": wrapper_bin_prefix + "bin/cc_wrapper.sh",
-        "gcov": tools_path_prefix + "bin/llvm-profdata",
-        "ld": tools_path_prefix + "bin/ld.lld" if use_lld else _host_tools.get_and_assert(host_tools_info, "ld"),
-        "llvm-cov": tools_path_prefix + "bin/llvm-cov",
-        "llvm-profdata": tools_path_prefix + "bin/llvm-profdata",
-        "nm": tools_path_prefix + "bin/llvm-nm",
-        "objcopy": tools_path_prefix + "bin/llvm-objcopy",
-        "objdump": tools_path_prefix + "bin/llvm-objdump",
+        "gcov": tools_path_prefix + "llvm-profdata",
+        "ld": tools_path_prefix + "ld.lld" if use_lld else _host_tools.get_and_assert(host_tools_info, "ld"),
+        "llvm-cov": tools_path_prefix + "llvm-cov",
+        "llvm-profdata": tools_path_prefix + "llvm-profdata",
+        "nm": tools_path_prefix + "llvm-nm",
+        "objcopy": tools_path_prefix + "llvm-objcopy",
+        "objdump": tools_path_prefix + "llvm-objdump",
         "strip": strip_binary,
     }
 

@@ -18,6 +18,19 @@ host_tool_features = struct(
     SUPPORTS_ARG_FILE = "supports_arg_file",
 )
 
+toolchain_tools = [
+    "clang-cpp",
+    "ld.lld",
+    "llvm-ar",
+    "llvm-dwp",
+    "llvm-profdata",
+    "llvm-cov",
+    "llvm-nm",
+    "llvm-objcopy",
+    "llvm-objdump",
+    "llvm-strip",
+]
+
 def python(rctx):
     # Get path of the python interpreter.
 
@@ -77,6 +90,12 @@ def canonical_dir_path(path):
     if not path.endswith("/"):
         return path + "/"
     return path
+
+def pkg_name_from_label(label):
+    if label.workspace_name:
+        return "@" + label.workspace_name + "//" + label.package
+    else:
+        return label.package
 
 def pkg_path_from_label(label):
     if label.workspace_root:

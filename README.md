@@ -26,8 +26,8 @@ To use this toolchain, include this section in your WORKSPACE:
 ```starlark
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-BAZEL_TOOLCHAIN_TAG = "0.7"
-BAZEL_TOOLCHAIN_SHA = "148e871e785ae699e6adfbb07afea241ee668dbc0c530e72a47356885fce0cb7"
+BAZEL_TOOLCHAIN_TAG = "0.7.1"
+BAZEL_TOOLCHAIN_SHA = "97853d0b2a725f9eb3f5c2cc922e86a69afb35a01b52a69b4f864eaf9f3c4f40"
 
 http_archive(
     name = "com_grail_bazel_toolchain",
@@ -136,7 +136,7 @@ The following mechanisms are available for using an LLVM toolchain:
    archive is downloaded and extracted as a separate repository with the suffix
    `_llvm`. The detection is not perfect, so you may have to use other options
    for some host OS type and versions. We expect the detection logic to grow
-through community contributions. We welcome PRs.
+   through community contributions. We welcome PRs.
 2. You can use the `urls` attribute to specify your own URLs for each OS type,
    version and architecture. For example, you can specify a different URL for
    Arch Linux and a different one for Ubuntu. Just as with the option above,
