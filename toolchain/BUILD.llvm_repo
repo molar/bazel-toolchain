@@ -43,6 +43,7 @@ filegroup(
     srcs = glob([
         "include/**/c++/**",
         "lib/clang/*/include/**",
+        "lib/clang/*/share/**", #asan_ignore.txt
     ]),
 )
 
@@ -62,6 +63,7 @@ filegroup(
         [
             "lib/**/lib*.a",
             "lib/clang/*/lib/**/*.a",
+            "lib/clang/*/share/**", #asan_ignore.txt
         ],
         exclude = [
             "lib/libLLVM*.a",
